@@ -202,7 +202,7 @@ func (c *kafkaConfig) Validate() error {
 	return nil
 }
 
-func newSaramaConfig(log *logp.Logger, config *kafkaConfig) (*sarama.Config, error) {
+func newSaramaConfig(log *logp.Logger, config *kafkaConfig, goMetricName string) (*sarama.Config, error) {
 	partitioner, err := makePartitioner(log, config.Partition)
 	if err != nil {
 		return nil, err
@@ -309,10 +309,14 @@ func newSaramaConfig(log *logp.Logger, config *kafkaConfig) (*sarama.Config, err
 	}
 	k.Version = version
 
+	if goMetricName == "" {
+		goMetricName = "libbeat.outputs.kafka"
+	}
+
 	k.Producer.Partitioner = partitioner
 	k.MetricRegistry = adapter.GetGoMetrics(
 		monitoring.Default,
-		"libbeat.outputs.kafka",
+		goMetricName,
 		adapter.Rename("incoming-byte-rate", "bytes_read"),
 		adapter.Rename("outgoing-byte-rate", "bytes_write"),
 		adapter.GoMetricsNilify,
