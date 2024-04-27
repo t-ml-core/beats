@@ -60,9 +60,14 @@ func makeKafka(
 		return outputs.Fail(err)
 	}
 
-	libCfg, err := newSaramaConfig(log, kConfig)
+	clientId, err := buildClientIdSelector(cfg)
 	if err != nil {
 		return outputs.Fail(err)
+	}
+
+	shouldUseMultiKafka := !clientId.IsConst()
+	if shouldUseMultiKafka {
+		kConfig.ClientID = "beats" // Will be replaced inside NewKafkaMultiClient with calculated value
 	}
 
 	hosts, err := outputs.ReadHostList(cfg)
@@ -70,14 +75,27 @@ func makeKafka(
 		return outputs.Fail(err)
 	}
 
-	codec, err := codec.CreateEncoder(beat, kConfig.Codec)
-	if err != nil {
-		return outputs.Fail(err)
-	}
+	var client outputs.Client
+	if !shouldUseMultiKafka {
+		libCfg, err := newSaramaConfig(log, kConfig, "")
+		if err != nil {
+			return outputs.Fail(err)
+		}
 
-	client, err := newKafkaClient(observer, hosts, beat.IndexPrefix, kConfig.Key, topic, kConfig.Headers, codec, libCfg)
-	if err != nil {
-		return outputs.Fail(err)
+		codec, err := codec.CreateEncoder(beat, kConfig.Codec)
+		if err != nil {
+			return outputs.Fail(err)
+		}
+
+		client, err = newKafkaClient(observer, hosts, beat.IndexPrefix, kConfig.Key, topic, kConfig.Headers, codec, libCfg)
+		if err != nil {
+			return outputs.Fail(err)
+		}
+	} else {
+		client, err = NewKafkaMultiClient(beat, observer, hosts, topic, kConfig, log, clientId)
+		if err != nil {
+			return outputs.Fail(err)
+		}
 	}
 
 	retry := 0
@@ -114,5 +132,20 @@ func buildTopicSelector(cfg *config.C) (outil.Selector, error) {
 		EnableSingleOnly: true,
 		FailEmpty:        true,
 		Case:             outil.SelectorKeepCase,
+	})
+}
+
+func buildClientIdSelector(cfg *config.C) (outil.Selector, error) {
+	clientIDCfg := struct {
+		ClientID string `config:"client_id" yaml:"client_id"`
+	}{}
+
+	if err := cfg.Unpack(&clientIDCfg); err != nil {
+		return outil.Selector{}, fmt.Errorf("cannot unpack Kafka config to read the client ID: %w", err)
+	}
+
+	return outil.BuildSelectorFromConfig(cfg, outil.Settings{
+		Key:              "client_id",
+		EnableSingleOnly: true,
 	})
 }
